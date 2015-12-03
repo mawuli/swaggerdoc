@@ -33,6 +33,9 @@ defmodule Mix.Tasks.Swagger do
   For a complete example, please see the [examples](https://github.com/OpenAperture/swaggerdoc/tree/master/examples) section.
   """
 
+  # do not include these fields in the generated API path parameters
+  @ecto_exclude_fields  [:id, :inserted_at, :updated_at]
+
   @doc """
   Mix entrypoint method
   """
@@ -117,49 +120,78 @@ defmodule Mix.Tasks.Swagger do
   end
 
   @doc """
+  Processes the route for collection of Ecto schema if a route action is either
+  `POST`, `PUT` or `PATCH`. Otherwise, parses the route path for placeholders.
+  """
+  @spec process_route(Phoenix.Router.Route.t) :: Map.t
+  defp process_route(route) do
+    func_name = "swaggerdoc_#{route.opts}"
+    if route.plug != nil && Keyword.has_key?(route.plug.__info__(:functions), String.to_atom(func_name)) do
+      apply(route.plug, String.to_atom(func_name), [])
+    else
+      if route.verb in [:put, :post, :patch] do
+        model_suffix =
+          Module.split(route.plug) |> Enum.at(-1)
+        |> String.trim_suffix("Controller")
+
+        # assumes model name is BaseApp.Model
+        module = Module.concat([Mix.Phoenix.base, model_suffix])
+
+        # collect schema defintions
+        params = Enum.map(collect_schema_defintions(module), &(build_parameter(&1)))
+        %{parameters: params}
+      else
+        parse_default_verb(route.path)
+      end
+    end
+
+  end
+
+  @doc """
   Method to add Phoenix routes to the Swagger map
   """
   @spec add_routes(list, map) :: map
   def add_routes(nil, swagger), do: swagger
   def add_routes([], swagger), do: swagger
   def add_routes([route | remaining_routes], swagger) do
-    swagger_path = path_from_route(String.split(route.path, "/"), nil)
+    pattern = Application.get_env(:swaggerdoc, :route_test_pattern, ~r//)
 
-    path = swagger[:paths][swagger_path]
-    if path == nil do
-      path = %{}
-    end
+    if Regex.match?(pattern, route.path) do
+      swagger_path = path_from_route(String.split(route.path, "/"), nil)
 
-    func_name = "swaggerdoc_#{route.opts}"
-    verb = if route.plug != nil && Keyword.has_key?(route.plug.__info__(:functions), String.to_atom(func_name)) do
-      apply(route.plug, String.to_atom(func_name), [])
+      path = swagger[:paths][swagger_path]
+      if path == nil do
+        path = %{}
+      end
+
+      verb = process_route(route)
+
+      response_schema = verb[:response_schema]
+      verb = Map.delete(verb, :response_schema)
+
+      verb_string = String.downcase("#{route.verb}")
+      if verb[:responses] == nil do
+        verb = Map.put(verb, :responses, default_responses(verb_string, response_schema))
+      end
+
+      if verb[:produces] == nil do
+        verb = Map.put(verb, :produces, Application.get_env(:swaggerdoc, :produces, []))
+      end
+
+      if verb[:operationId] == nil do
+        verb = Map.put(verb, :operationId, "#{route.opts}")
+      end
+
+      if verb[:description] == nil do
+        verb = Map.put(verb, :description, "")
+      end
+
+      path = Map.put(path, verb_string, verb)
+      paths = Map.put(swagger[:paths], swagger_path, path)
+      add_routes(remaining_routes, Map.put(swagger, :paths, paths))
     else
-      parse_default_verb(route.path)
+      add_routes(remaining_routes, swagger)
     end
-
-    response_schema = verb[:response_schema]
-    verb = Map.delete(verb, :response_schema)
-
-    verb_string = String.downcase("#{route.verb}")
-    if verb[:responses] == nil do
-      verb = Map.put(verb, :responses, default_responses(verb_string, response_schema))
-    end
-
-    if verb[:produces] == nil do
-      verb = Map.put(verb, :produces, Application.get_env(:swaggerdoc, :produces, []))
-    end
-
-    if verb[:operationId] == nil do
-      verb = Map.put(verb, :operationId, "#{route.opts}")
-    end
-
-    if verb[:description] == nil do
-      verb = Map.put(verb, :description, "")
-    end
-
-    path = Map.put(path, verb_string, verb)
-    paths = Map.put(swagger[:paths], swagger_path, path)
-    add_routes(remaining_routes, Map.put(swagger, :paths, paths))
   end
 
   @doc """
@@ -184,22 +216,8 @@ defmodule Mix.Tasks.Swagger do
   def parse_default_verb(path) do
     parameters = Enum.reduce String.split(path, "/"), [], fn(path_segment, parameters) ->
       if String.first(path_segment) == ":" do
-
-        #http://swagger.io/specification/#parameterObject
-        parameter = %{
-          "name" => String.slice(path_segment, 1..String.length(path_segment)),
-          "in" => "path",
-          "description" => "",
-          "required" => true,
-          "type" => "string"
-        }
-
-        #assumes all params named "id" are integers
-        if parameter["name"] == "id" do
-          parameter = Map.put(parameter, "type", "integer")
-        end
-
-        parameters ++ [parameter]
+        name = String.slice(path_segment, 1..String.length(path_segment))
+        parameters ++ [build_parameter(name)]
       else
         parameters
       end
@@ -208,6 +226,22 @@ defmodule Mix.Tasks.Swagger do
     %{
        parameters: parameters,
      }
+  end
+
+  @doc """
+  Returns a parameter object
+  """
+  @spec build_parameter(String.t, String.t) :: Map.t
+  def build_parameter(name, type \\ "string") do
+    #http://swagger.io/specification/#parameterObject
+    %{
+      "name" => (if is_tuple(name), do: elem(name, 0), else: name),
+      "in" => "path",
+      "description" => "",
+      "required" => true,
+      #assumes all params named "id" are integers
+      "type" => (if name == "id", do: "integer",else: type)
+    }
   end
 
   @doc """
@@ -241,16 +275,30 @@ defmodule Mix.Tasks.Swagger do
   def build_definitions([], def_json), do: def_json
   def build_definitions([code_def | remaining_defs], def_json) do
     module = elem(code_def, 0)
-    if :erlang.function_exported(module, :__schema__, 1) do
-      properties_json = Enum.reduce module.__schema__(:types), %{}, fn(type, properties_json) ->
-        Map.put(properties_json, "#{elem(type, 0)}", convert_property_type(elem(type, 1)))
-      end
+    if properties_json = collect_schema_defintions(module) do
 
       module_json = %{"properties" => properties_json}
       def_json = Map.put(def_json, "#{inspect module}", module_json)
     end
 
     build_definitions(remaining_defs, def_json)
+  end
+
+
+  @doc """
+  Method to gather schema definitions from Ecto models
+  """
+  @spec collect_schema_defintions(atom) :: Map.t
+  def collect_schema_defintions(module, exclude_fields \\ @ecto_exclude_fields) do
+    if :erlang.function_exported(module, :__schema__, 1) do
+      Enum.reduce module.__schema__(:types), %{}, fn(type, properties_json) ->
+        if elem(type, 0) in exclude_fields do
+          Map.put(properties_json, "#{elem(type, 0)}", convert_property_type(elem(type, 1)))
+        else
+          properties_json
+        end
+      end
+    end
   end
 
   @doc """
