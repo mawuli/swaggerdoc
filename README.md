@@ -54,6 +54,14 @@ The following task-specific options are available:
   * Description:  Specifies the file name (within the output_path) of the Swagger JSON
   * Type:  string
   * Default Value:  "api.json"
+* :route_test_pattern
+  * Description: Regex pattern to test route paths for inclusion in the generated docs
+  * Type: Regex
+  * Default Value: ~r//
+* :exclude_parameters
+  * Description: Ecto model fields to exclude in the generated API parameters
+  * Type: List
+  * Default Value: [:id, :inserted_at, :updated_at]
 
 ### Swagger Config
 The following Swagger-specific options are available:
@@ -133,18 +141,6 @@ The following Swagger-specific options are available:
   * Swagger Location:  [License Object](http://swagger.io/specification/#licenseObject), "url"
   * Type:  string
   * Default Value:  ""
-
-Additional configs to limit the route and which Ecto modelf fields to include:
-
-* :route_test_pattern
-  * Description: Regex pattern to test route paths for inclusion in the generated docs
-  * Type: Regex
-  * Default Value: ~r//
-
-* :exclude_parameters
-  * Description: Ecto model fields to exclude in the generated API parameters
-  * Type: List
-  * Default Value: [:id, :inserted_at, :updated_at]
 
 Here's an example from the sample [HelloUser's config.exs](https://github.com/OpenAperture/swaggerdoc/blob/master/examples/hello_user/config/config.exs):
 ```iex
