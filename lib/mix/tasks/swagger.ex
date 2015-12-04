@@ -34,7 +34,7 @@ defmodule Mix.Tasks.Swagger do
   """
 
   # do not include these fields in the generated API path parameters
-  @ecto_exclude_fields  [:id, :inserted_at, :updated_at]
+  @ecto_exclude_fields  Application.get_env(:swaggerdoc, :exclude_parameters, [:id, :inserted_at, :updated_at])
 
   @doc """
   Mix entrypoint method
@@ -293,9 +293,9 @@ defmodule Mix.Tasks.Swagger do
     if :erlang.function_exported(module, :__schema__, 1) do
       Enum.reduce module.__schema__(:types), %{}, fn(type, properties_json) ->
         if elem(type, 0) in exclude_fields do
-          Map.put(properties_json, "#{elem(type, 0)}", convert_property_type(elem(type, 1)))
-        else
           properties_json
+        else
+          Map.put(properties_json, "#{elem(type, 0)}", convert_property_type(elem(type, 1)))
         end
       end
     end
