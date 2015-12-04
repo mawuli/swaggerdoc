@@ -131,21 +131,27 @@ defmodule Mix.Tasks.Swagger do
     else
       if route.verb in [:put, :post, :patch] do
         model_suffix =
-          Module.split(route.plug) |> Enum.at(-1)
-        |> String.trim_suffix("Controller")
+          Module.split(route.plug) |> Enum.at(-1) |> String.trim_suffix("Controller")
 
         # assumes model name is BaseApp.Model
         module = Module.concat([Mix.Phoenix.base, model_suffix])
 
-        # collect schema defintions
-        params = Enum.map(collect_schema_defintions(module), &(build_parameter(&1)))
-        %{parameters: params}
+        route_params = Application.get_env(:swaggerdoc, :build_route_params, &__MODULE__.build_route_params/1)
+        %{parameters: route_params.(module)}
       else
         parse_default_verb(route.path)
       end
     end
-
   end
+
+  @doc """
+  Returns list of Swagger parameters objects
+  """
+  @spec build_route_params(atom) :: Enum.t
+  def build_route_params(module) do
+   Enum.map(collect_schema_defintions(module), &(build_parameter(&1)))
+  end
+
 
   @doc """
   Method to add Phoenix routes to the Swagger map
@@ -232,13 +238,13 @@ defmodule Mix.Tasks.Swagger do
   Returns a parameter object
   """
   @spec build_parameter(String.t, String.t) :: Map.t
-  def build_parameter(name, type \\ "string") do
+  def build_parameter(name, required \\ true, type \\ "string") do
     #http://swagger.io/specification/#parameterObject
     %{
       "name" => (if is_tuple(name), do: elem(name, 0), else: name),
       "in" => "path",
       "description" => "",
-      "required" => true,
+      "required" => required,
       #assumes all params named "id" are integers
       "type" => (if name == "id", do: "integer",else: type)
     }

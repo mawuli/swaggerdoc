@@ -62,6 +62,10 @@ The following task-specific options are available:
   * Description: Ecto model fields to exclude in the generated API parameters
   * Type: List
   * Default Value: [:id, :inserted_at, :updated_at]
+* :build_router_params
+  * Description: Callback for generating list of Swagger parameter objects
+  * Type: List
+  * Default Value: &Mix.Tasks.Swagger.build_route_params/1
 
 ### Swagger Config
 The following Swagger-specific options are available:
