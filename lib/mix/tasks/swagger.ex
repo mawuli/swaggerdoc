@@ -131,7 +131,8 @@ defmodule Mix.Tasks.Swagger do
     else
       if route.verb in [:put, :post, :patch] do
         model_suffix =
-          Module.split(route.plug) |> Enum.at(-1) |> String.trim_suffix("Controller")
+          (with x <- Module.split(route.plug) |> Enum.at(-1),
+               do: String.split(x, "Controller") |> Enum.at(0))
 
         # assumes model name is BaseApp.Model
         module = Module.concat([Mix.Phoenix.base, model_suffix])
